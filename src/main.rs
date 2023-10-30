@@ -5,32 +5,40 @@ use std::io::Cursor;
 use std::default::Default;
 use std::cmp::max;
 use std::time::Instant;
+use lazy_static::lazy_static;
+use rayon::prelude::*;
 
-#[derive(Clone, Debug)] 
-struct Block {
-    block_name: String,
-    namespace: String,
+//TODO: Ask ChatGPT to look at the code, explain it was converted from python and ask if theres rust specific features or unoptimized code and to make it faster
+
+#[derive(Debug, Clone, Copy)]
+struct Block<'a> {
+    block_name: &'a str,
+    namespace: &'a str,
     world_pos: Option<(i32, i32, i32)>,
     chunk_pos: Option<(i32, i32)>,
-    properties: String,
-    biome: Option<String>,
+    properties: &'a nbt::CompoundTag,
+    biome: Option<&'a str>,
     is_structure: bool,
 }
 
+lazy_static! { // this uses the lazy_static crate; `use lazy_static::lazy_static`
+    static ref EMPTY_TAG: nbt::CompoundTag = nbt::CompoundTag::new();
+}
 
-impl Default for Block {
+impl<'a> Default for Block<'a> {
     fn default() -> Self {
         Block {
-            block_name: String::from("air"),
-            namespace: String::from("minecraft"),
+            block_name: "air",
+            namespace: "minecraft",
             world_pos: None,
             chunk_pos: None,
-            properties: String::from("{}"),
+            properties: &EMPTY_TAG,
             biome: None,
             is_structure: false,
         }
     }
 }
+
 
 fn get_chunk_offset(data: &Vec<u8>, chunk_x: i32, chunk_z: i32) -> (i32, u8) {
     let b_off = 4 * (chunk_x % 32 + chunk_z % 32 * 32); // V
@@ -93,7 +101,7 @@ fn calculate_position(block_index: i32, chunk_x: i32, chunk_z: i32, min_section_
     (world_x as i32, world_y, world_z as i32)
 }
 
-fn parse_blocks(chunk_nbt: nbt::CompoundTag) -> Vec<Vec<Block>> {
+fn parse_blocks(chunk_nbt: &nbt::CompoundTag) -> [[Block; 4096]; 25] {
     let empty_block: Block = Default::default();
     let chunk_sections_nbt = chunk_nbt.get_compound_tag_vec("sections").unwrap();
     let sections_amount = chunk_sections_nbt.len();
@@ -119,13 +127,9 @@ fn parse_blocks(chunk_nbt: nbt::CompoundTag) -> Vec<Vec<Block>> {
         }
     }
 
-    let mut chunk: Vec<Vec<Block>> = Vec::with_capacity(sections_amount);
-    for _ in 0..sections_amount {
-        chunk.push(vec![empty_block.clone(); 4096]);
-    }
+    let mut chunk: [[Block; 4096]; 25] = [[empty_block; 4096]; 25];
 
-    for section_index in min_viable_section_ind..sections_amount as i32 {
-        let block_states_list = &section_block_states[section_index as usize];
+    section_block_states.par_iter_mut().enumerate().take(sections_amount).skip(min_viable_section_ind as usize).for_each(|(section_index,block_states_list)| {
 
         if let (Ok(tmp_block_states_data), Ok(tmp_block_palette)) = (
             block_states_list.get_i64_vec("data"),
@@ -174,29 +178,24 @@ fn parse_blocks(chunk_nbt: nbt::CompoundTag) -> Vec<Vec<Block>> {
                     Some(idx) => (&block_full_name[..idx], &block_full_name[(idx + 1)..]),
                     None => ("minecraft", "air"),
                 };
-                let world_pos = calculate_position(block_index, chunk_x, chunk_z, min_section_value, section_index);
+                let world_pos = calculate_position(block_index, chunk_x, chunk_z, min_section_value, section_index as i32);
 
                 let properties = current_palette_block.get_compound_tag("Properties");
-                let new_props;
-                if properties.is_err() {
-                    new_props = String::from("{}");
-                } else {
-                    new_props = properties.unwrap().to_string();
-                }
+                let new_props = if let Ok(new_props) = properties { new_props } else { &EMPTY_TAG };
                 block_index += 1;
                 current_long >>= bits_per_block;
                 long_length -= bits_per_block;
 
                 chunk[section_index as usize][section_block_index] = Block {
-                    block_name: block_name.to_string(),
-                    namespace: block_namespace.to_string(),
+                    block_name: block_name,
+                    namespace: block_namespace,
                     world_pos: Some(world_pos),
                     properties: new_props,
                     ..Default::default()
                 };
             }
         }
-    }
+    });
 
     chunk
 }
@@ -214,8 +213,9 @@ fn main() {
             if reader.read_to_end(&mut buffer).is_ok() {
                 let now = Instant::now();
                 let cnk_nbt = read_chunk(buffer, 15, 30).unwrap();
-                let data = parse_blocks(cnk_nbt);
-                println!("Time: {:?}", now.elapsed());
+                let data = parse_blocks(&cnk_nbt);
+                let s = now.elapsed();
+                println!("Time: {:?}", s);
             } else {
                 eprintln!("Failed to read the file.");
             }
