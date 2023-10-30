@@ -8,7 +8,6 @@ use std::time::Instant;
 use lazy_static::lazy_static;
 use rayon::prelude::*;
 
-//TODO: Ask ChatGPT to look at the code, explain it was converted from python and ask if theres rust specific features or unoptimized code and to make it faster
 
 #[derive(Debug, Clone, Copy)]
 struct Block<'a> {
