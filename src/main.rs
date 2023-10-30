@@ -6,9 +6,7 @@ use std::default::Default;
 use std::cmp::max;
 use std::time::Instant;
 
-//TODO: Ask ChatGPT to look at the code, explain it was converted from python and ask if theres rust specific features or unoptimized code and to make it faster
-
-#[derive(Clone, Debug)] // Add Debug, before Clone if doesnt work
+#[derive(Clone, Debug)] 
 struct Block {
     block_name: String,
     namespace: String,
