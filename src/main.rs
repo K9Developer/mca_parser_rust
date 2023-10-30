@@ -128,7 +128,7 @@ fn parse_blocks(chunk_nbt: &nbt::CompoundTag) -> [[Block; 4096]; 25] {
 
     let mut chunk: [[Block; 4096]; 25] = [[empty_block; 4096]; 25];
 
-    section_block_states.par_iter_mut().enumerate().take(sections_amount).skip(min_viable_section_ind as usize).for_each(|(section_index,block_states_list)| {
+    section_block_states.par_iter_mut().zip(&mut chunk).enumerate().take(sections_amount).skip(min_viable_section_ind as usize).for_each(|(section_index,(block_states_list, chunk))| {
 
         if let (Ok(tmp_block_states_data), Ok(tmp_block_palette)) = (
             block_states_list.get_i64_vec("data"),
@@ -185,7 +185,7 @@ fn parse_blocks(chunk_nbt: &nbt::CompoundTag) -> [[Block; 4096]; 25] {
                 current_long >>= bits_per_block;
                 long_length -= bits_per_block;
 
-                chunk[section_index as usize][section_block_index] = Block {
+                chunk[section_block_index] = Block {
                     block_name: block_name,
                     namespace: block_namespace,
                     world_pos: Some(world_pos),
