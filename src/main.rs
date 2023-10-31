@@ -7,7 +7,6 @@ use std::cmp::max;
 use std::time::Instant;
 use lazy_static::lazy_static;
 
-
 #[derive(Debug, Clone, Copy)]
 struct Block<'a> {
     block_name: &'a str,
@@ -99,7 +98,7 @@ fn calculate_position(block_index: i32, chunk_x: i32, chunk_z: i32, min_section_
     (world_x as i32, world_y, world_z as i32)
 }
 
-fn parse_blocks(chunk_nbt: &nbt::CompoundTag) -> Vec<[Block<'_>; 4096]> {
+fn parse_blocks(chunk_nbt: &nbt::CompoundTag) -> Box<[Block<'_>]> {
     let empty_block: Block = Default::default();
     let chunk_sections_nbt = chunk_nbt.get_compound_tag_vec("sections").unwrap();
     let sections_amount = chunk_sections_nbt.len();
@@ -125,7 +124,8 @@ fn parse_blocks(chunk_nbt: &nbt::CompoundTag) -> Vec<[Block<'_>; 4096]> {
         }
     }
 
-    let mut chunk = vec![[empty_block; 4096];25];
+    let mut chunk: Box<[Block; 25 * 4096]> = vec![empty_block;25*4096].try_into().unwrap();
+
     for section_index in min_viable_section_ind..sections_amount as i32 {
         let block_states_list = &section_block_states[section_index as usize];
 
@@ -184,7 +184,7 @@ fn parse_blocks(chunk_nbt: &nbt::CompoundTag) -> Vec<[Block<'_>; 4096]> {
                 current_long >>= bits_per_block;
                 long_length -= bits_per_block;
 
-                chunk[section_index as usize][section_block_index] = Block {
+                chunk[section_index as usize * section_block_index] = Block {
                     block_name: block_name,
                     namespace: block_namespace,
                     world_pos: Some(world_pos),
@@ -199,8 +199,6 @@ fn parse_blocks(chunk_nbt: &nbt::CompoundTag) -> Vec<[Block<'_>; 4096]> {
 }
 
 fn main() {
-    
-    // Handle the file opening operation properly
     let file_result = File::open("D:\\ServersTest\\Test2\\world\\region\\r.-3.-2.mca");
     match file_result {
         Ok(f) => {
