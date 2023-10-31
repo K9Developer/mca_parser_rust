@@ -1,104 +1,4 @@
-use std::fs::File;
-use std::io::{BufReader, Read};
-use nbt::decode::read_zlib_compound_tag;
-use std::io::Cursor;
-use std::default::Default;
-use std::cmp::max;
-use std::time::Instant;
-use lazy_static::lazy_static;
-
-#[derive(Debug, Clone, Copy)]
-struct Block<'a> {
-    block_name: &'a str,
-    namespace: &'a str,
-    world_pos: Option<(i32, i32, i32)>,
-    chunk_pos: Option<(i32, i32)>,
-    properties: &'a nbt::CompoundTag,
-    biome: Option<&'a str>,
-    is_structure: bool,
-}
-
-lazy_static! { // this uses the lazy_static crate; `use lazy_static::lazy_static`
-    static ref EMPTY_TAG: nbt::CompoundTag = nbt::CompoundTag::new();
-}
-
-impl<'a> Default for Block<'a> {
-    fn default() -> Self {
-        Block {
-            block_name: "air",
-            namespace: "minecraft",
-            world_pos: None,
-            chunk_pos: None,
-            properties: &EMPTY_TAG,
-            biome: None,
-            is_structure: false,
-        }
-    }
-}
-
-
-fn get_chunk_offset(data: &Vec<u8>, chunk_x: i32, chunk_z: i32) -> (i32, u8) {
-    let b_off = 4 * (chunk_x % 32 + chunk_z % 32 * 32); // V
-    let b_off_usize = b_off as usize;
-    let off_bytes = &data[b_off_usize..(b_off_usize + 3)];
-    let off = i32::from_be_bytes([0, off_bytes[0], off_bytes[1], off_bytes[2]]);
-    let sectors = data[b_off_usize + 3];
-    (off, sectors)
-}
-
-
-fn read_chunk(data: Vec<u8>, chunk_x: i32, chunk_z: i32) -> Result<nbt::CompoundTag, ()> {
-    let off = get_chunk_offset(&data, chunk_x, chunk_z);
-
-    if off == (0, 0) {
-        return Err(());
-    }
-
-
-    let uoff = off.0 as usize * 4096; // V
-    let length_bytes = &data[uoff..uoff + 4];
-    let length = i32::from_be_bytes(length_bytes.try_into().unwrap());
-    let compressed_data = &data[(uoff + 5)..(uoff + 5 + (length as usize) + 1)];
-    
-    let mut cursor: Cursor<&[u8]> = Cursor::new(compressed_data); 
-    Ok(read_zlib_compound_tag(&mut cursor).unwrap())
-}
-
-fn bit_length(num: i32) -> u32 {
-    if num == 0 {
-        return 1;
-    }
-    let abs_num = num.abs();
-    32 - abs_num.leading_zeros()
-}
-
-/*
-
-def calculate_position(block_index, chunk_x, chunk_z, min_section_value, section_index):
-    section_relative_y = block_index//256
-    base_calc = block_index-section_relative_y*256
-    relative_chunk_x = base_calc%16
-    relative_chunk_z = base_calc//16
-    world_x = relative_chunk_x+(chunk_x)*16
-    world_z = relative_chunk_z+(chunk_z)*16
-    world_y = (section_index+min_section_value)*16 + section_relative_y
-    return world_x, world_z, world_y
-*/
-
-fn calculate_position(block_index: i32, chunk_x: i32, chunk_z: i32, min_section_value: i32, section_index: i32) -> (i32, i32, i32) {
-    let section_relative_y = block_index / 256;
-
-    let base_calc = block_index - section_relative_y * 256;
-    let relative_chunk_x = base_calc % 16;
-    let relative_chunk_z = base_calc / 16;
-
-    let world_x = relative_chunk_x + (chunk_x) * 16;
-    let world_z = relative_chunk_z + (chunk_z) * 16;
-    let world_y = (section_index + min_section_value) * 16 + section_relative_y as i32;
-    (world_x as i32, world_y, world_z as i32)
-}
-
-fn parse_blocks(chunk_nbt: &nbt::CompoundTag) -> Box<[Block<'_>]> {
+fn parse_blocks(chunk_nbt: &nbt::CompoundTag) -> Vec<[Block<'_>; 4096]> {
     let empty_block: Block = Default::default();
     let chunk_sections_nbt = chunk_nbt.get_compound_tag_vec("sections").unwrap();
     let sections_amount = chunk_sections_nbt.len();
@@ -124,9 +24,10 @@ fn parse_blocks(chunk_nbt: &nbt::CompoundTag) -> Box<[Block<'_>]> {
         }
     }
 
-    let mut chunk: Box<[Block; 25 * 4096]> = vec![empty_block;25*4096].try_into().unwrap();
-
+    let mut chunk = vec![[empty_block; 4096];25];
+    
     for section_index in min_viable_section_ind..sections_amount as i32 {
+        let mut hash_block_palette: HashMap<usize, [String; 2]> = HashMap::new();
         let block_states_list = &section_block_states[section_index as usize];
 
         if let (Ok(tmp_block_states_data), Ok(tmp_block_palette)) = (
@@ -135,6 +36,10 @@ fn parse_blocks(chunk_nbt: &nbt::CompoundTag) -> Box<[Block<'_>]> {
         ) {
             let block_states_data = tmp_block_states_data;
             let block_palette = tmp_block_palette;
+
+            block_palette.to_vec().iter().enumerate().for_each(|(ind, block)| {
+                hash_block_palette.insert(ind, [block.get_str("Name").unwrap().to_string(), block.get_str("Properties").unwrap().to_string()]);
+            });
 
             let bits_per_block = max(bit_length((block_palette.len() as i32 - 1) as i32), 4) as i32;
 
@@ -155,15 +60,15 @@ fn parse_blocks(chunk_nbt: &nbt::CompoundTag) -> Box<[Block<'_>]> {
                     current_long = block_states_data[block_states_data_index];
 
                     if current_long < 0 {
-                        let tmp_long: i128 = current_long as i128 + 18446744073709551616; // 2^64
+                        let tmp_long: i64 = current_long as i64 + 0; // 2^64
                         current_long = tmp_long as i64;
                     }
 
                     long_length = 64;
                 }
 
-                let current_palette_block = &block_palette[(current_long & max_index_value) as usize];
-                let block_full_name = current_palette_block.get_str("Name").unwrap();
+                let current_palette_block = hash_block_palette[&((current_long & max_index_value) as usize)].clone();
+                let block_full_name = current_palette_block[0].clone();
 
                 if block_full_name == "minecraft:air" {
                     block_index += 1;
@@ -172,23 +77,21 @@ fn parse_blocks(chunk_nbt: &nbt::CompoundTag) -> Box<[Block<'_>]> {
                     continue;
                 }
 
-                let (block_namespace, block_name) = match block_full_name.find(':') {
-                    Some(idx) => (&block_full_name[..idx], &block_full_name[(idx + 1)..]),
-                    None => ("minecraft", "air"),
-                };
+                let cloned = block_full_name.clone();
+                let (block_namespace, block_name) = block_full_name.split_once(':').unwrap_or(("minecraft", "air"));
                 let world_pos = calculate_position(block_index, chunk_x, chunk_z, min_section_value, section_index as i32);
 
-                let properties = current_palette_block.get_compound_tag("Properties");
-                let new_props = if let Ok(new_props) = properties { new_props } else { &EMPTY_TAG };
+                let properties = &(current_palette_block[1].clone());
+                // let new_props = if let Ok(new_props) = properties { new_props } else { &EMPTY_TAG };
                 block_index += 1;
                 current_long >>= bits_per_block;
                 long_length -= bits_per_block;
 
-                chunk[section_index as usize * section_block_index] = Block {
+                chunk[section_index as usize][section_block_index] = Block {
                     block_name: block_name,
                     namespace: block_namespace,
                     world_pos: Some(world_pos),
-                    properties: new_props,
+                    properties: properties,
                     ..Default::default()
                 };
             }
@@ -197,29 +100,3 @@ fn parse_blocks(chunk_nbt: &nbt::CompoundTag) -> Box<[Block<'_>]> {
 
     chunk
 }
-
-fn main() {
-    let file_result = File::open("D:\\ServersTest\\Test2\\world\\region\\r.-3.-2.mca");
-    match file_result {
-        Ok(f) => {
-            let mut reader = BufReader::new(f);
-            let mut buffer = Vec::new();
-
-            // Read file into vector.
-            if reader.read_to_end(&mut buffer).is_ok() {
-                let now = Instant::now();
-                let cnk_nbt = read_chunk(buffer, 15, 30).unwrap();
-                let data = parse_blocks(&cnk_nbt);
-                let s = now.elapsed();
-                println!("Time: {:?}", s);
-            } else {
-                eprintln!("Failed to read the file.");
-            }
-        }
-        Err(err) => {
-            eprintln!("Failed to open the file: {:?}", err);
-        }
-    }
-}
-
-
