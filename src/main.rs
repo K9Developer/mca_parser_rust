@@ -18,7 +18,7 @@ struct Block<'a> {
     structure: Option<(&'a str)>,
 }
 
-lazy_static! { // this uses the lazy_static crate; `use lazy_static::lazy_static`
+lazy_static! {
     static ref EMPTY_TAG: nbt::CompoundTag = nbt::CompoundTag::new();
 }
 
