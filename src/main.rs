@@ -6,7 +6,6 @@ use std::default::Default;
 use std::cmp::max;
 use std::time::Instant;
 use lazy_static::lazy_static;
-use rayon::prelude::*;
 
 
 #[derive(Debug, Clone, Copy)]
@@ -100,7 +99,7 @@ fn calculate_position(block_index: i32, chunk_x: i32, chunk_z: i32, min_section_
     (world_x as i32, world_y, world_z as i32)
 }
 
-fn parse_blocks(chunk_nbt: &nbt::CompoundTag) -> [[Block; 4096]; 25] {
+fn parse_blocks(chunk_nbt: &nbt::CompoundTag) -> Vec<[Block<'_>; 4096]> {
     let empty_block: Block = Default::default();
     let chunk_sections_nbt = chunk_nbt.get_compound_tag_vec("sections").unwrap();
     let sections_amount = chunk_sections_nbt.len();
@@ -126,9 +125,9 @@ fn parse_blocks(chunk_nbt: &nbt::CompoundTag) -> [[Block; 4096]; 25] {
         }
     }
 
-    let mut chunk: [[Block; 4096]; 25] = [[empty_block; 4096]; 25];
-
-    section_block_states.par_iter_mut().zip(&mut chunk).enumerate().take(sections_amount).skip(min_viable_section_ind as usize).for_each(|(section_index,(block_states_list, chunk))| {
+    let mut chunk = vec![[empty_block; 4096];25];
+    for section_index in min_viable_section_ind..sections_amount as i32 {
+        let block_states_list = &section_block_states[section_index as usize];
 
         if let (Ok(tmp_block_states_data), Ok(tmp_block_palette)) = (
             block_states_list.get_i64_vec("data"),
@@ -185,7 +184,7 @@ fn parse_blocks(chunk_nbt: &nbt::CompoundTag) -> [[Block; 4096]; 25] {
                 current_long >>= bits_per_block;
                 long_length -= bits_per_block;
 
-                chunk[section_block_index] = Block {
+                chunk[section_index as usize][section_block_index] = Block {
                     block_name: block_name,
                     namespace: block_namespace,
                     world_pos: Some(world_pos),
@@ -194,7 +193,7 @@ fn parse_blocks(chunk_nbt: &nbt::CompoundTag) -> [[Block; 4096]; 25] {
                 };
             }
         }
-    });
+    }
 
     chunk
 }
